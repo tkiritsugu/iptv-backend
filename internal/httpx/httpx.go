@@ -12,6 +12,7 @@
 package httpx
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -53,9 +54,25 @@ func NewError(status int, code, message string) *ErrorStable {
 	return &ErrorStable{Status: status, Code: code, Message: message}
 }
 
+// Marshal encodes a payload without HTML escaping. Escaping is the default for
+// good reason in HTML documents, but this is application/json: escaping turns
+// every "&" in a playback URL into \u0026, which is noise for the client and for
+// anyone reading a log. Values are never pasted into HTML by the admin panel,
+// which writes them with textContent under a CSP that allows no inline script.
+func Marshal(payload any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(payload); err != nil {
+		return nil, err
+	}
+	// Encode appends a newline; responses are single-line documents.
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
+}
+
 // JSON writes a response body.
 func JSON(w http.ResponseWriter, r *http.Request, status int, payload any) error {
-	body, err := json.Marshal(payload)
+	body, err := Marshal(payload)
 	if err != nil {
 		return err
 	}
@@ -75,7 +92,7 @@ func JSON(w http.ResponseWriter, r *http.Request, status int, payload any) error
 // by the caller, never here.
 func Error(w http.ResponseWriter, r *http.Request, status int, code, message string) {
 	payload := ErrorBody{Error: ErrorObject{Code: code, Message: message, RequestID: RequestID(r.Context())}}
-	body, err := json.Marshal(payload)
+	body, err := Marshal(payload)
 	if err != nil {
 		// Cannot happen for this struct; keep the connection honest anyway.
 		http.Error(w, "internal error", http.StatusInternalServerError)

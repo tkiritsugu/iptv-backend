@@ -18,7 +18,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base32"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -170,7 +169,7 @@ func (c *Channels) List(ctx context.Context, userID int64, admin, includeUnavail
 		}
 		view.Count = len(view.Channels)
 
-		body, err := json.Marshal(view)
+		body, err := httpx.Marshal(view)
 		if err != nil {
 			return nil, 0, fmt.Errorf("service: render channels: %w", err)
 		}

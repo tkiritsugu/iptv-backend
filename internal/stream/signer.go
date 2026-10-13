@@ -59,7 +59,9 @@ func (s *Signer) Playback(path string, now time.Time) (link string, expires time
 	}
 	u := *s.base
 	u.Path = joinPath(s.base.Path, path)
-	expires = now.Add(s.ttl)
+	// Truncated to seconds: the token carries whole seconds, and the expiry the
+	// client is told about must be exactly the moment the token stops working.
+	expires = now.Add(s.ttl).Truncate(time.Second)
 	if s.signing {
 		q := u.Query()
 		q.Set("exp", strconv.FormatInt(expires.Unix(), 10))

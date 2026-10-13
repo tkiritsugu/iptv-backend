@@ -489,6 +489,14 @@ func TestPlaybackLinkIsSignedAndTimeLimited(t *testing.T) {
 	if !strings.Contains(playback.URL, "sig=") || !strings.Contains(playback.URL, "exp=") {
 		t.Error("the link carries no signature")
 	}
+	// The link must survive being read by a client that does not decode escapes
+	// eagerly, and the expiry must be the whole second the token carries.
+	if strings.Contains(string(resp.body), `\u0026`) {
+		t.Errorf("the URL is HTML-escaped inside the JSON: %s", resp.body)
+	}
+	if strings.Contains(playback.ExpiresAt.Format(time.RFC3339Nano), ".") {
+		t.Errorf("expires_at %q is finer than the token's second", playback.ExpiresAt)
+	}
 	if want := e.clock.Now().Add(15 * time.Minute); !playback.ExpiresAt.Equal(want) {
 		t.Errorf("expires_at = %v, want %v", playback.ExpiresAt, want)
 	}
@@ -849,8 +857,13 @@ func TestAdminPanelIsServedAndProtected(t *testing.T) {
 	if !bytes.Contains(page.body, []byte("админ-панель")) {
 		t.Error("the panel page did not render")
 	}
-	if csp := page.header.Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'none'") {
-		t.Errorf("CSP = %q, want a strict default", csp)
+	// A CSP that denies by default but forgets connect-src leaves a page that
+	// renders and cannot do anything, so check both halves.
+	csp := page.header.Get("Content-Security-Policy")
+	for _, directive := range []string{"default-src 'none'", "script-src 'self'", "style-src 'self'", "connect-src 'self'"} {
+		if !strings.Contains(csp, directive) {
+			t.Errorf("CSP %q is missing %q", csp, directive)
+		}
 	}
 	// The panel's script and stylesheet are same-origin files, not inline code.
 	e.request(http.MethodGet, "/admin/app.js", adminLogin, adminPassword, nil).wantStatus(http.StatusOK)
