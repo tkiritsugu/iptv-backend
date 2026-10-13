@@ -248,10 +248,13 @@ func (c *Cache) Get(ctx context.Context, key string, load Loader) (any, error) {
 		// When the version could not be read we behave as if nothing changed;
 		// the TTL and the stale window keep us honest.
 		if (versionErr != nil || unchanged) && c.now().Before(e.expiresAt) {
+			// Copy the value while holding the lock: another goroutine may be
+			// replacing this entry's fields right now.
+			value := e.value
 			c.order.MoveToFront(el)
 			c.stats.Hits++
 			c.mu.Unlock()
-			return e.value, nil
+			return value, nil
 		}
 		c.stats.Misses++
 	} else {

@@ -64,6 +64,7 @@ func (l *Limiter) Allow(key string) bool {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.purgeLocked(l.now())
 	return l.refillLocked(key, l.now()).tokens >= 1
 }
 
