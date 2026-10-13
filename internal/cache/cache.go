@@ -307,7 +307,7 @@ func (c *Cache) Get(ctx context.Context, key string, load Loader) (any, error) {
 // doLoad runs the loader for key, collapsing concurrent misses onto one call.
 // The ttl travels with the value instead of living on the cache, so parallel
 // loads of different keys cannot mix their lifetimes.
-func (c *Cache) doLoad(ctx context.Context, key string, fn Loader) (any, time.Duration, error) {
+func (c *Cache) doLoad(ctx context.Context, key string, fn Loader) (val any, ttl time.Duration, err error) {
 	c.mu.Lock()
 	if cc, ok := c.inflight[key]; ok {
 		c.stats.Collisions++
@@ -320,22 +320,36 @@ func (c *Cache) doLoad(ctx context.Context, key string, fn Loader) (any, time.Du
 	c.inflight[key] = cc
 	c.mu.Unlock()
 
-	value, ttl, err := fn(ctx)
+	// The in-flight slot has to be released on every path, including a panic in
+	// the loader. A slot that is never deleted answers every later request for
+	// that key with the first result for the lifetime of the process — which is
+	// exactly how a fresh grant once kept returning "subscription required".
+	var loaded bool
+	defer func() {
+		if !loaded && err == nil {
+			val, ttl, err = nil, c.ttl, errLoadAborted
+		}
+		c.mu.Lock()
+		delete(c.inflight, key)
+		c.stats.Loads++
+		if err != nil {
+			c.stats.LoadErrors++
+		}
+		c.mu.Unlock()
+		cc.val, cc.ttl, cc.err = val, ttl, err
+		cc.wg.Done()
+	}()
+
+	val, ttl, err = fn(ctx)
+	loaded = true
 	if ttl <= 0 {
 		ttl = c.ttl
 	}
-
-	c.mu.Lock()
-	c.stats.Loads++
-	if err != nil {
-		c.stats.LoadErrors++
-	}
-	c.mu.Unlock()
-
-	cc.val, cc.ttl, cc.err = value, ttl, err
-	cc.wg.Done()
-	return value, ttl, err
+	return val, ttl, err
 }
+
+// errLoadAborted reports a loader that did not return normally.
+var errLoadAborted = errors.New("cache: load did not complete")
 
 // Stats returns a snapshot of the counters.
 func (c *Cache) Stats() Stats {
