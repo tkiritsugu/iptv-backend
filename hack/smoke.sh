@@ -8,6 +8,10 @@
 set -eu
 
 BASE=${BASE:-http://127.0.0.1:8080}
+# The script is safe to run repeatedly against the same database: everything it
+# creates uses a number this run picked at random, so it cannot collide with the
+# leftovers of an earlier run.
+NUM=$((1000 + RANDOM % 9000))
 BODY=$(mktemp)
 trap 'rm -f "$BODY"' EXIT
 
@@ -123,10 +127,10 @@ request "revoke ch5" 204 DELETE /api/v1/admin/users/2/subscriptions/5 -u "$ADMIN
 request "viewer loses ch5 right after revoke" 403 GET /api/v1/channels/5/playback -u "$VIEWER"
 request "unknown field rejected" 400 POST /api/v1/admin/users -u "$ADMIN" $JSON -d '{"login":"x","password":"whatever12","admim":true}'
 request "short password rejected" 400 POST /api/v1/admin/users -u "$ADMIN" $JSON -d '{"login":"shorty","password":"short"}'
-request "bad stream path rejected" 400 POST /api/v1/admin/channels -u "$ADMIN" $JSON -d '{"number":77,"name":"Test","stream_path":"live/.."}'
-request "create channel" 201 POST /api/v1/admin/channels -u "$ADMIN" $JSON -d '{"number":77,"name":"Смоук тест","stream_path":"/live/ch77/index.m3u8"}'
+request "bad stream path rejected" 400 POST /api/v1/admin/channels -u "$ADMIN" $JSON -d "{\"number\": $NUM, \"name\": \"Test\", \"stream_path\": \"live/..\"}"
+request "create channel" 201 POST /api/v1/admin/channels -u "$ADMIN" $JSON -d "{\"number\": $NUM, \"name\": \"Смоук тест\", \"stream_path\": \"/live/ch$NUM/index.m3u8\"}"
 NEW_ID=$(grep -o '"id":[0-9]*' "$BODY" | head -1 | cut -d: -f2)
-request "duplicate number" 409 POST /api/v1/admin/channels -u "$ADMIN" $JSON -d '{"number":77,"name":"Дубль","stream_path":"/live/ch78/index.m3u8"}'
+request "duplicate number" 409 POST /api/v1/admin/channels -u "$ADMIN" $JSON -d "{\"number\": $NUM, \"name\": \"Дубль\", \"stream_path\": \"/live/ch$NUM/index.m3u8\"}"
 request "switch channel off" 200 PATCH "/api/v1/admin/channels/$NEW_ID" -u "$ADMIN" $JSON -d '{"is_active":false}'
 request "off channel is 404 for admin" 404 GET "/api/v1/channels/$NEW_ID/playback" -u "$ADMIN"
 request "unknown channel id" 404 PATCH /api/v1/admin/channels/424242 -u "$ADMIN" $JSON -d '{"is_active":false}'
