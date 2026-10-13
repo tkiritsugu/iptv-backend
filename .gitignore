@@ -1,0 +1,8 @@
+# local dev artifacts
+.devcache/
+data/
+bin/
+*.log
+*.db
+*.db-wal
+*.db-shm
