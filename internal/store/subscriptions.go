@@ -110,7 +110,8 @@ func (s *Store) RevokeSubscription(ctx context.Context, userID, channelID int64)
 // them.
 func (s *Store) ListSubscriptions(ctx context.Context, userID int64) ([]Subscription, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT s.id, s.user_id, s.channel_id, s.expires_at, s.created_at, s.updated_at, c.number
+		`SELECT s.id, s.user_id, s.channel_id, s.expires_at, s.created_at, s.updated_at,
+		        c.number, c.is_active
 		   FROM subscriptions s JOIN channels c ON c.id = s.channel_id
 		  WHERE s.user_id = ?
 		  ORDER BY c.number, s.id`, userID)
@@ -125,13 +126,14 @@ func (s *Store) ListSubscriptions(ctx context.Context, userID int64) ([]Subscrip
 			id, userID, channelID int64
 			expires               sql.NullInt64
 			created, updated      int64
-			number                int
+			number, active        int
 		)
-		if err := rows.Scan(&id, &userID, &channelID, &expires, &created, &updated, &number); err != nil {
+		if err := rows.Scan(&id, &userID, &channelID, &expires, &created, &updated, &number, &active); err != nil {
 			return nil, fmt.Errorf("store: list subscriptions scan: %w", err)
 		}
 		sub := newSubscription(id, userID, channelID, expires, created, updated)
 		sub.ChannelNum = number
+		sub.ChannelActive = active == 1
 		subs = append(subs, sub)
 	}
 	if err := rows.Err(); err != nil {

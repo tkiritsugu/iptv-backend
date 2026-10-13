@@ -1,0 +1,9 @@
+.git
+.devcache
+data
+bin
+*.db
+*.db-wal
+*.db-shm
+README.md
+ТЗ*.md

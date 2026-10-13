@@ -12,7 +12,8 @@ import (
 // The UNIQUE (user_id, channel_id) index guarantees at most one row per
 // channel, so the join cannot duplicate channels.
 const accessQuery = `
-	SELECT c.id, c.number, c.name, c.stream_path, c.is_active, s.expires_at
+	SELECT c.id, c.number, c.name, c.stream_path, c.is_active,
+	       s.id AS grant_id, s.expires_at
 	  FROM channels c
 	  LEFT JOIN subscriptions s ON (s.channel_id = c.id AND s.user_id = ?)
 	 WHERE %s
@@ -89,13 +90,19 @@ func NextExpiry(access []ChannelAccess) time.Time {
 	return next
 }
 
+// scanAccess turns a joined row into a decision.
+//
+// grant_id, not expires_at, tells "no grant" apart from "grant without an
+// expiry": both have a NULL expires_at, and conflating them would make every
+// unlimited subscription look missing.
 func scanAccess(row interface{ Scan(dest ...any) error }, now time.Time, admin bool) (ChannelAccess, error) {
 	var (
 		c       Channel
 		active  int
+		grant   sql.NullInt64
 		expires sql.NullInt64
 	)
-	if err := row.Scan(&c.ID, &c.Number, &c.Name, &c.StreamPath, &active, &expires); err != nil {
+	if err := row.Scan(&c.ID, &c.Number, &c.Name, &c.StreamPath, &active, &grant, &expires); err != nil {
 		return ChannelAccess{}, err
 	}
 	c.Active = active == 1
@@ -109,13 +116,13 @@ func scanAccess(row interface{ Scan(dest ...any) error }, now time.Time, admin b
 	case admin:
 		// The admin role is not a subscription: no grant, no expiry.
 		ca.Available, ca.ExpiresAt = c.Active, nil
-	case !c.Active:
+	case !c.Active, !grant.Valid:
 		ca.Available = false
 	case expires.Valid:
+		// A grant with an end moment: it stops working on its own.
 		ca.Available = expires.Int64 > now.Unix()
 	default:
-		// No grant row at all.
-		ca.Available = false
+		ca.Available = true
 	}
 	return ca, nil
 }

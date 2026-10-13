@@ -60,6 +60,11 @@ type Config struct {
 	CacheMaxEntries int
 	AuthCacheTTL    time.Duration
 
+	// Healthcheck, used by the container image: perform a single request
+	// against the local server and exit 0/1 instead of serving.
+	Healthcheck     bool
+	HealthcheckPath string
+
 	// Brute force protection on failed logins.
 	LoginLimitPerIP  int
 	LoginLimitWindow time.Duration
@@ -139,6 +144,11 @@ func Load(args []string, getenv func(string) string) (*Config, error) {
 	fs.DurationVar(&cfg.CacheStaleTTL, "cache-stale-ttl", envDuration(getenv, "IPTV_CACHE_STALE_TTL", cfg.CacheStaleTTL), "how long a stale entry may still be served when the database fails")
 	fs.IntVar(&cfg.CacheMaxEntries, "cache-max-entries", envInt(getenv, "IPTV_CACHE_MAX_ENTRIES", cfg.CacheMaxEntries), "maximum number of cached entries per cache")
 	fs.DurationVar(&cfg.AuthCacheTTL, "auth-cache-ttl", envDuration(getenv, "IPTV_AUTH_CACHE_TTL", cfg.AuthCacheTTL), "how long a verified set of credentials is remembered (bounds deactivation latency and password hashing cost)")
+
+	fs.BoolVar(&cfg.Healthcheck, "healthcheck", envBool(getenv, "IPTV_HEALTHCHECK", cfg.Healthcheck),
+		"probe the running server and exit instead of serving (for HEALTHCHECK)")
+	fs.StringVar(&cfg.HealthcheckPath, "healthcheck-path", envString(getenv, "IPTV_HEALTHCHECK_PATH", "/healthz"),
+		"path probed by -healthcheck, e.g. /readyz to include the database")
 
 	fs.IntVar(&cfg.LoginLimitPerIP, "login-limit", envInt(getenv, "IPTV_LOGIN_LIMIT", cfg.LoginLimitPerIP), "failed logins allowed per client per window, 0 disables the limit")
 	fs.DurationVar(&cfg.LoginLimitWindow, "login-window", envDuration(getenv, "IPTV_LOGIN_WINDOW", cfg.LoginLimitWindow), "window for the failed login limit")

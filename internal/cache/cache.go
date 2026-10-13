@@ -22,6 +22,7 @@ package cache
 import (
 	"container/list"
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -124,6 +125,29 @@ func (v *Versions) Current(ctx context.Context, group string) (int64, error) {
 		return 0, err
 	}
 	return value, nil
+}
+
+// permanentError marks a loader failure as a definitive answer rather than an
+// infrastructure problem, so the cache refuses to fall back to a stale entry.
+// Authenticating a user whose account has been switched off is the case that
+// matters: "no longer allowed" must never be answered from a stale entry.
+type permanentError struct{ err error }
+
+func (e permanentError) Error() string { return e.err.Error() }
+func (e permanentError) Unwrap() error { return e.err }
+
+// Permanent marks err so Get does not serve a stale value for it.
+func Permanent(err error) error {
+	if err == nil {
+		return nil
+	}
+	return permanentError{err: err}
+}
+
+// IsPermanent reports whether err was produced by Permanent.
+func IsPermanent(err error) bool {
+	var p permanentError
+	return errors.As(err, &p)
 }
 
 // Loader builds a value on a cache miss. A ttl <= 0 means "use the cache
@@ -237,6 +261,9 @@ func (c *Cache) Get(ctx context.Context, key string, load Loader) (any, error) {
 
 	value, ttl, err := c.doLoad(ctx, key, load)
 	if err != nil {
+		if IsPermanent(err) {
+			return nil, err
+		}
 		c.mu.Lock()
 		if el, ok := c.entries[key]; ok && c.now().Before(el.Value.(*entry).hardAt) {
 			value := el.Value.(*entry).value

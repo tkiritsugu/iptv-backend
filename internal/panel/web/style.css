@@ -1,0 +1,185 @@
+:root {
+	color-scheme: light dark;
+	--line: #d5d9e0;
+	--text: #1b1f27;
+	--muted: #5c6672;
+	--accent: #1f6feb;
+	--danger: #b42318;
+	--ok: #147d3c;
+	--off: #9a6b00;
+	--bg: #f6f7f9;
+	--panel: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--line: #333a45;
+		--text: #e6e9ef;
+		--muted: #9aa4b2;
+		--accent: #6ea8fe;
+		--danger: #ff8b81;
+		--ok: #6ee7a8;
+		--off: #ffd166;
+		--bg: #14171c;
+		--panel: #1c2027;
+	}
+}
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+	padding: 1.5rem;
+	background: var(--bg);
+	color: var(--text);
+	font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+header {
+	margin-bottom: 1.5rem;
+}
+
+h1 {
+	font-size: 1.4rem;
+	margin: 0 0 .25rem;
+}
+
+h2 {
+	font-size: 1.05rem;
+	margin: 0 0 .75rem;
+	text-transform: uppercase;
+	letter-spacing: .04em;
+	color: var(--muted);
+}
+
+.hint,
+code {
+	color: var(--muted);
+	font-size: .85rem;
+}
+
+main {
+	display: grid;
+	gap: 1.25rem;
+}
+
+section {
+	background: var(--panel);
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	padding: 1rem 1.15rem 1.25rem;
+}
+
+table {
+	width: 100%;
+	border-collapse: collapse;
+	margin-bottom: .9rem;
+}
+
+th,
+td {
+	text-align: left;
+	padding: .45rem .5rem;
+	border-bottom: 1px solid var(--line);
+	vertical-align: middle;
+}
+
+th {
+	font-size: .78rem;
+	text-transform: uppercase;
+	letter-spacing: .04em;
+	color: var(--muted);
+}
+
+td.ok {
+	color: var(--ok);
+}
+
+td.off {
+	color: var(--off);
+}
+
+.row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: .5rem;
+	align-items: end;
+}
+
+label {
+	display: flex;
+	flex-direction: column;
+	gap: .2rem;
+	font-size: .8rem;
+	color: var(--muted);
+}
+
+label:has(input[type="checkbox"]) {
+	flex-direction: row;
+	align-items: center;
+	font-size: .9rem;
+	color: var(--text);
+}
+
+input,
+select,
+button {
+	font: inherit;
+	padding: .4rem .55rem;
+	border-radius: 7px;
+	border: 1px solid var(--line);
+	background: var(--panel);
+	color: var(--text);
+}
+
+input[type="checkbox"] {
+	width: auto;
+}
+
+button {
+	background: var(--accent);
+	border-color: var(--accent);
+	color: #fff;
+	cursor: pointer;
+}
+
+button:hover {
+	filter: brightness(1.08);
+}
+
+button.danger {
+	background: transparent;
+	border-color: var(--danger);
+	color: var(--danger);
+}
+
+td button {
+	margin-right: .35rem;
+	padding: .25rem .5rem;
+	font-size: .82rem;
+}
+
+pre {
+	background: var(--bg);
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	padding: .75rem;
+	overflow: auto;
+	font-size: .8rem;
+}
+
+.status {
+	min-height: 1.2rem;
+	margin-top: .35rem;
+	font-size: .9rem;
+}
+
+.status.ok {
+	color: var(--ok);
+}
+
+.status.error {
+	color: var(--danger);
+}

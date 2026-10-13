@@ -1,0 +1,28 @@
+# One command: docker compose up
+#
+# Defaults are chosen for a local demo — data lives in a named volume, the demo
+# accounts from the README work immediately. Change IPTV_STREAM_KEY before
+# exposing this anywhere real, and put TLS in front (see README).
+services:
+  iptv:
+    build: .
+    image: iptv-backend:local
+    ports:
+      - "8080:8080"
+    environment:
+      IPTV_ADDR: ":8080"
+      IPTV_DB: /data/iptv.db
+      IPTV_SEED: "true"
+      IPTV_LOG_FORMAT: text
+      IPTV_LOG_LEVEL: info
+      # Development value on purpose. With a different key per deployment, a link
+      # signed by one instance is useless to another.
+      IPTV_STREAM_KEY: dev-only-change-me-0123456789
+      IPTV_STREAM_BASE_URL: http://stream.example.com
+      IPTV_STREAM_TTL: 15m
+    volumes:
+      - iptv-data:/data
+    restart: unless-stopped
+
+volumes:
+  iptv-data:

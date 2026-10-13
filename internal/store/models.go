@@ -33,8 +33,12 @@ type Subscription struct {
 	ID         int64      `json:"id"`
 	UserID     int64      `json:"user_id"`
 	ChannelID  int64      `json:"channel_id"`
-	ChannelNum int        `json:"channel_number,omitempty"`
-	ExpiresAt  *time.Time `json:"expires_at"`
+	// ChannelNum and ChannelActive are filled in by ListSubscriptions for the
+	// admin view; a grant on a switched-off channel looks valid until you see
+	// that the channel itself is off.
+	ChannelNum    int        `json:"channel_number"`
+	ChannelActive bool       `json:"channel_active"`
+	ExpiresAt     *time.Time `json:"expires_at"`
 	CreatedAt  time.Time  `json:"created_at"`
 	UpdatedAt  time.Time  `json:"updated_at"`
 }

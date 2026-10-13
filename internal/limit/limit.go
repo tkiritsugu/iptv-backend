@@ -54,19 +54,35 @@ func (l *Limiter) WithClock(now func() time.Time) {
 	l.now = now
 }
 
-// Allow consumes one token and reports whether the key may proceed. When it
-// returns false no token is consumed, so a blocked caller does not extend the
-// lockout by retrying.
+// Allow reports whether the key may proceed. It does not consume anything: only
+// a failure costs a token, so a client that keeps authenticating correctly can
+// never use up its own budget, and a client that is already blocked does not
+// extend the lockout by retrying.
 func (l *Limiter) Allow(key string) bool {
 	if l.burst == 0 {
 		return true
 	}
-	now := l.now()
-
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.purgeLocked(now)
+	return l.refillLocked(key, l.now()).tokens >= 1
+}
 
+// Failure charges one token to a key; this is what a rejected login costs.
+func (l *Limiter) Failure(key string) {
+	if l.burst == 0 {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	b := l.refillLocked(key, l.now())
+	b.tokens--
+	if b.tokens < 0 {
+		b.tokens = 0
+	}
+}
+
+// refillLocked returns the bucket of a key after applying accrued refill.
+func (l *Limiter) refillLocked(key string, now time.Time) *bucket {
 	b := l.buckets[key]
 	if b == nil {
 		b = &bucket{tokens: l.burst, updated: now}
@@ -77,11 +93,7 @@ func (l *Limiter) Allow(key string) bool {
 		b.tokens = l.burst
 	}
 	b.updated = now
-	if b.tokens < 1 {
-		return false
-	}
-	b.tokens--
-	return true
+	return b
 }
 
 // RetryAfter reports how long the key should wait before the next attempt.
@@ -91,8 +103,8 @@ func (l *Limiter) RetryAfter(key string) time.Duration {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	b := l.buckets[key]
-	if b == nil {
+	b, ok := l.buckets[key]
+	if !ok {
 		return 0
 	}
 	missing := 1 - b.tokens
