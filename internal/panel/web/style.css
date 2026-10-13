@@ -123,6 +123,15 @@ label:has(input[type="checkbox"]) {
 	color: var(--text);
 }
 
+/* Let the text inputs share the row instead of clipping their placeholders. */
+.row > input[type="text"],
+.row > input[type="number"],
+.row > input[type="password"],
+.row > select {
+	flex: 1 1 12rem;
+	min-width: 0;
+}
+
 input,
 select,
 button {

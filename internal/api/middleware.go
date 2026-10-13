@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"iptv/internal/auth"
@@ -112,10 +113,21 @@ func securityHeaders(next http.Handler) http.Handler {
 		head.Set("X-Content-Type-Options", "nosniff")
 		head.Set("X-Frame-Options", "DENY")
 		head.Set("Referrer-Policy", "no-referrer")
-		// A strict CSP for the panel: everything is same-origin and inline, no
-		// third party script can be introduced if a channel name turns out to
-		// carry markup.
-		head.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; form-action 'self'")
+		// A strict CSP for the panel: default-deny, with same-origin scripts,
+		// styles and fetches allowed. connect-src is what lets the page call the
+		// admin API; without it the page renders and every request inside it is
+		// blocked, which is exactly the kind of bug a screenshot catches and an
+		// API test does not.
+		head.Set("Content-Security-Policy", strings.Join([]string{
+			"default-src 'none'",
+			"script-src 'self'",
+			"style-src 'self'",
+			"connect-src 'self'",
+			"img-src 'self' data:",
+			"form-action 'self'",
+			"base-uri 'none'",
+			"frame-ancestors 'none'",
+		}, "; "))
 		next.ServeHTTP(w, r)
 	})
 }

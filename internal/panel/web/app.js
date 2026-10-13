@@ -23,7 +23,14 @@ async function call(path, options = {}) {
 	if (response.status === 204) {
 		return null;
 	}
-	const body = await response.json().catch(() => ({}));
+	const text = await response.text();
+	let body = {};
+	try {
+		body = text ? JSON.parse(text) : {};
+	} catch (err) {
+		// A 2xx that is not JSON is a server bug worth seeing in the console.
+		console.error('admin API returned a non-JSON body', response.status, text);
+	}
 	if (!response.ok) {
 		const message = (body.error && body.error.message) || ('HTTP ' + response.status);
 		throw new Error((body.error && body.error.code ? body.error.code + ': ' : '') + message);
@@ -54,6 +61,7 @@ async function action(fn, okMessage) {
 		show('ok', okMessage);
 		return true;
 	} catch (err) {
+		console.error(err);
 		show('error', err.message);
 		return false;
 	}
@@ -127,12 +135,17 @@ async function loadUsers() {
 		row.append(actions);
 		body.append(row);
 	}
+	// Only the visible selector lists users; the grant form inherits the current
+	// choice from loadSubscriptions, and its user_id is a hidden input.
 	fillSelect('subs-user', users.map((u) => [u.id, u.login]));
-	fillSelect('grant-user', users.map((u) => [u.id, u.login]));
 }
 
 function fillSelect(id, options) {
 	const select = document.getElementById(id);
+	if (!select) {
+		console.error('no such select: ' + id);
+		return;
+	}
 	const previous = select.value;
 	select.textContent = '';
 	for (const [value, label] of options) {
@@ -141,8 +154,12 @@ function fillSelect(id, options) {
 		option.textContent = label;
 		select.append(option);
 	}
-	if ([...select.options].some((o) => o.value === previous)) {
-		select.value = previous;
+	// select.options is an HTMLOptionsCollection: indexable, but not iterable.
+	for (let i = 0; i < select.options.length; i += 1) {
+		if (select.options[i].value === previous) {
+			select.value = previous;
+			break;
+		}
 	}
 }
 
@@ -234,7 +251,10 @@ document.getElementById('user-form').addEventListener('submit', async (event) =>
 
 document.getElementById('subs-form').addEventListener('submit', (event) => {
 	event.preventDefault();
-	loadSubscriptions(new FormData(event.target).get('user_id')).catch((err) => show('error', err.message));
+	loadSubscriptions(new FormData(event.target).get('user_id')).catch((err) => {
+		console.error(err);
+		show('error', err.message);
+	});
 });
 
 document.getElementById('grant-form').addEventListener('submit', (event) => {
@@ -253,6 +273,7 @@ document.getElementById('refresh-cache').addEventListener('click', async () => {
 		const stats = await call('cache');
 		document.getElementById('cache-stats').textContent = JSON.stringify(stats, null, 2);
 	} catch (err) {
+		console.error(err);
 		show('error', err.message);
 	}
 });
@@ -260,4 +281,7 @@ document.getElementById('refresh-cache').addEventListener('click', async () => {
 loadChannels()
 	.then(loadUsers)
 	.then(() => loadSubscriptions(document.getElementById('subs-user').value))
-	.catch((err) => show('error', err.message));
+	.catch((err) => {
+		console.error(err);
+		show('error', err.message);
+	});
