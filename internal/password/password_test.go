@@ -156,3 +156,20 @@ func itoa(n int) string {
 	}
 	return string(digits)
 }
+
+// BenchmarkKDFCost measures the work one password check costs, which is what
+// decides how expensive a brute-force attempt is — and why the verified
+// login/password pair is cached.
+func BenchmarkKDFCost(b *testing.B) {
+	h := New(150_000)
+	sum, err := h.Hash("viewer12345")
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := h.Verify(sum, "viewer12345"); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
