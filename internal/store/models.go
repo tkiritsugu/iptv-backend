@@ -30,17 +30,17 @@ type Channel struct {
 // Subscription grants a user access to a channel. A nil ExpiresAt means the
 // grant is unlimited and is only switched off by an administrator.
 type Subscription struct {
-	ID         int64      `json:"id"`
-	UserID     int64      `json:"user_id"`
-	ChannelID  int64      `json:"channel_id"`
+	ID        int64 `json:"id"`
+	UserID    int64 `json:"user_id"`
+	ChannelID int64 `json:"channel_id"`
 	// ChannelNum and ChannelActive are filled in by ListSubscriptions for the
 	// admin view; a grant on a switched-off channel looks valid until you see
 	// that the channel itself is off.
 	ChannelNum    int        `json:"channel_number"`
 	ChannelActive bool       `json:"channel_active"`
 	ExpiresAt     *time.Time `json:"expires_at"`
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 // Active reports whether the grant is valid at the given moment. Keeping the

@@ -54,9 +54,9 @@ type HandlerConfig struct {
 }
 
 type handler struct {
-	cfg  HandlerConfig
-	log  *slog.Logger
-	now  func() time.Time
+	cfg HandlerConfig
+	log *slog.Logger
+	now func() time.Time
 }
 
 // NewRouter builds the fully wrapped HTTP handler.
