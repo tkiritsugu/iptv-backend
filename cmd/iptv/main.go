@@ -196,7 +196,11 @@ func run() error {
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancelShutdown()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("shutdown: %w", err)
+		// The grace period ran out with requests still in flight. Closing the
+		// listener is still correct: those clients lose their connection, which is
+		// what they would get from a killed process anyway, but say so loudly.
+		log.Warn("shutdown did not finish in time, closing the listener",
+			"budget", cfg.ShutdownTimeout.String(), "error", err)
 	}
 	if err := srv.Close(); err != nil {
 		return fmt.Errorf("close server: %w", err)
