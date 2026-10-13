@@ -30,6 +30,7 @@ import (
 	"iptv/internal/config"
 	"iptv/internal/limit"
 	"iptv/internal/panel"
+	"iptv/internal/password"
 	"iptv/internal/seed"
 	"iptv/internal/service"
 	"iptv/internal/store"
@@ -59,6 +60,10 @@ func run() error {
 		return healthcheck(cfg)
 	}
 	log := cfg.Logger()
+
+	// The work factor applies to new passwords; existing hashes carry their own
+	// count and are upgraded on the next successful login.
+	hasher := password.New(cfg.PasswordIterations)
 
 	if err := prepareDataDir(cfg.DatabasePath); err != nil {
 		return err
@@ -90,7 +95,7 @@ func run() error {
 	}()
 
 	if cfg.Seed {
-		seeded, err := seed.Demo(startCtx, st, log)
+		seeded, err := seed.Demo(startCtx, st, hasher, log)
 		if err != nil {
 			return err
 		}
@@ -115,15 +120,16 @@ func run() error {
 	// is the maximum time a disabled account could still be let in if the
 	// database became unreachable at the wrong moment.
 	authStale := min(cfg.CacheStaleTTL, 30*time.Second)
-	authenticator, err := auth.New(st, versions, cfg.AuthCacheTTL, authStale, cfg.CacheMaxEntries, limiter, log)
+	authenticator, err := auth.New(st, versions, hasher, cfg.AuthCacheTTL, authStale, cfg.CacheMaxEntries, limiter, log)
 	if err != nil {
 		return err
 	}
 
 	channels := service.NewChannels(st, versions, cfg.CacheTTL, cfg.CacheStaleTTL,
 		cfg.CacheMaxEntries, signer, log)
-	adminService := service.NewAdmin(st, channels, log)
-
+	// A configuration change clears both caches on this instance: what a user
+	// may watch, and who is allowed in.
+	adminService := service.NewAdmin(st, hasher, log, channels, authenticator)
 	panelHandler, err := panel.New()
 	if err != nil {
 		return err
@@ -161,6 +167,7 @@ func run() error {
 			"log_format", cfg.LogFormat,
 			"log_level", cfg.LogLevel.String(),
 			"stream_signing", cfg.StreamSigning,
+			"pbkdf2_iterations", cfg.PasswordIterations,
 			"cache_ttl", cfg.CacheTTL.String(),
 			"cache_version_ttl", cfg.CacheVersionTTL.String(),
 			"admin_panel", "/admin/",

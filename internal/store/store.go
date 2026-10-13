@@ -124,6 +124,11 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// Now is the store's time source. Anything that decides validity over time —
+// seeding, the service layer, tests with a fake clock — reads "now" through it,
+// so a single injected clock controls the whole application.
+func (s *Store) Now() time.Time { return s.now() }
+
 // Ping reports whether the database is reachable; used by the readiness probe.
 func (s *Store) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
 

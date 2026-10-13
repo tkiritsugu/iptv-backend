@@ -19,7 +19,7 @@ import (
 
 // Demo writes the demo data set when the users table is empty and reports
 // whether it inserted anything.
-func Demo(ctx context.Context, st *store.Store, log *slog.Logger) (bool, error) {
+func Demo(ctx context.Context, st *store.Store, hasher password.Hasher, log *slog.Logger) (bool, error) {
 	users, err := st.ListUsers(ctx)
 	if err != nil {
 		return false, fmt.Errorf("seed: list users: %w", err)
@@ -47,17 +47,17 @@ func Demo(ctx context.Context, st *store.Store, log *slog.Logger) (bool, error) 
 		byName[ch.Name] = created
 	}
 
-	now := time.Now()
+	now := st.Now()
 	accounts := []struct {
 		user store.NewUser
 		subs []store.Subscription
 	}{
 		{
-			user: store.NewUser{Login: "admin", PasswordHash: hash("admin12345"), Active: true, Admin: true},
+			user: store.NewUser{Login: "admin", PasswordHash: hash(hasher, "admin12345"), Active: true, Admin: true},
 			// The admin role sees every active channel, no grants needed.
 		},
 		{
-			user: store.NewUser{Login: "viewer", PasswordHash: hash("viewer12345"), Active: true},
+			user: store.NewUser{Login: "viewer", PasswordHash: hash(hasher, "viewer12345"), Active: true},
 			subs: []store.Subscription{
 				{ChannelID: byName["Первый"].ID},
 				{ChannelID: byName["Россия 1"].ID},
@@ -69,7 +69,7 @@ func Demo(ctx context.Context, st *store.Store, log *slog.Logger) (bool, error) 
 			},
 		},
 		{
-			user: store.NewUser{Login: "viewer2", PasswordHash: hash("viewer12345"), Active: true},
+			user: store.NewUser{Login: "viewer2", PasswordHash: hash(hasher, "viewer12345"), Active: true},
 			subs: []store.Subscription{
 				{ChannelID: byName["Первый"].ID},
 				// Already expired: access is refused without anybody touching it.
@@ -77,7 +77,7 @@ func Demo(ctx context.Context, st *store.Store, log *slog.Logger) (bool, error) 
 			},
 		},
 		{
-			user: store.NewUser{Login: "blocked", PasswordHash: hash("blocked12345"), Active: false},
+			user: store.NewUser{Login: "blocked", PasswordHash: hash(hasher, "blocked12345"), Active: false},
 			subs: []store.Subscription{
 				{ChannelID: byName["Первый"].ID},
 			},
@@ -103,10 +103,10 @@ func Demo(ctx context.Context, st *store.Store, log *slog.Logger) (bool, error) 
 	return true, nil
 }
 
-func hash(pw string) string {
+func hash(hasher password.Hasher, pw string) string {
 	// Demo data is created once at startup; a failure here means the KDF or the
 	// platform RNG is broken and the service cannot work at all.
-	h, err := password.Hash(pw)
+	h, err := hasher.Hash(pw)
 	if err != nil {
 		panic("seed: " + err.Error())
 	}

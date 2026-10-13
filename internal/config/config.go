@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"iptv/internal/password"
 )
 
 // Config holds every tunable knob of the service.
@@ -42,6 +44,10 @@ type Config struct {
 
 	// Seed populates demo data when the database is empty.
 	Seed bool
+
+	// PasswordIterations is the PBKDF2 work factor for new passwords. Stored
+	// hashes carry their own count, so raising it only affects the next login.
+	PasswordIterations int
 
 	// Logging
 	LogLevel  slog.Level
@@ -85,9 +91,10 @@ func Default() *Config {
 		ShutdownTimeout:   15 * time.Second,
 		MaxBodyBytes:      64 << 10,
 
-		DatabasePath:     "./data/iptv.db",
-		DatabaseMaxConns: 16,
-		Seed:             true,
+		DatabasePath:       "./data/iptv.db",
+		DatabaseMaxConns:   16,
+		Seed:               true,
+		PasswordIterations: password.DefaultIterations,
 
 		LogLevel:  slog.LevelInfo,
 		LogFormat: "json",
@@ -130,8 +137,18 @@ func Load(args []string, getenv func(string) string) (*Config, error) {
 	fs.StringVar(&cfg.DatabasePath, "db", envString(getenv, "IPTV_DB", cfg.DatabasePath), "path to the SQLite database file (a directory is created if missing)")
 	fs.IntVar(&cfg.DatabaseMaxConns, "db-max-conns", envInt(getenv, "IPTV_DB_MAX_CONNS", cfg.DatabaseMaxConns), "maximum open database connections")
 	fs.BoolVar(&cfg.Seed, "seed", envBool(getenv, "IPTV_SEED", cfg.Seed), "insert demo users and channels into an empty database")
+	fs.IntVar(&cfg.PasswordIterations, "pbkdf2-iterations", envInt(getenv, "IPTV_PBKDF2_ITERATIONS", cfg.PasswordIterations),
+		fmt.Sprintf("PBKDF2 work factor for new passwords (minimum %d)", password.MinimumIterations))
 
-	fs.Var(&logLevelFlag{level: &cfg.LogLevel}, "log-level", envString(getenv, "IPTV_LOG_LEVEL", "debug|info|warn|error (default info)"))
+	// The log level needs an explicit environment read: a flag default is a
+	// string, and a slog.Level has no string default of its own.
+	levelFlag := &logLevelFlag{level: &cfg.LogLevel}
+	if raw := getenv("IPTV_LOG_LEVEL"); raw != "" {
+		if err := levelFlag.Set(raw); err != nil {
+			return nil, fmt.Errorf("IPTV_LOG_LEVEL: %w", err)
+		}
+	}
+	fs.Var(levelFlag, "log-level", "logging level: debug, info, warn or error")
 	fs.StringVar(&cfg.LogFormat, "log-format", envString(getenv, "IPTV_LOG_FORMAT", cfg.LogFormat), "log format: json or text")
 
 	fs.StringVar(&cfg.StreamBaseURL, "stream-base-url", envString(getenv, "IPTV_STREAM_BASE_URL", cfg.StreamBaseURL), "origin of the streaming server used to build playback URLs")
@@ -207,6 +224,10 @@ func (c *Config) Validate() error {
 	}
 	if c.RequestTimeout <= 0 {
 		return fmt.Errorf("request-timeout must be > 0")
+	}
+	if c.PasswordIterations < password.MinimumIterations {
+		return fmt.Errorf("pbkdf2-iterations must be at least %d, got %d",
+			password.MinimumIterations, c.PasswordIterations)
 	}
 	return nil
 }

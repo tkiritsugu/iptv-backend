@@ -91,12 +91,12 @@ type AccessStore interface {
 
 // Channels serves the two read endpoints.
 type Channels struct {
-	store   AccessStore
-	cache   *cache.Cache
-	ttl     time.Duration
-	signer  *stream.Signer
-	log     *slog.Logger
-	now     func() time.Time
+	store  AccessStore
+	cache  *cache.Cache
+	ttl    time.Duration
+	signer *stream.Signer
+	log    *slog.Logger
+	now    func() time.Time
 }
 
 // Option tweaks the service.
@@ -111,7 +111,6 @@ func WithClock(now func() time.Time) Option {
 func NewChannels(st AccessStore, versions *cache.Versions, ttl, staleTTL time.Duration, maxEntries int, signer *stream.Signer, log *slog.Logger, opts ...Option) *Channels {
 	c := &Channels{
 		store:  st,
-		cache:  cache.New(versions, "channels", store.VersionCatalog, ttl, staleTTL, maxEntries, log),
 		ttl:    ttl,
 		signer: signer,
 		log:    log,
@@ -120,6 +119,12 @@ func NewChannels(st AccessStore, versions *cache.Versions, ttl, staleTTL time.Du
 	for _, opt := range opts {
 		opt(c)
 	}
+	// The cache is built after the options so it shares the service clock: entry
+	// expiry and the "is this grant still valid" decision must be made by the
+	// same notion of now, or a time limited subscription could be served from an
+	// entry the service already considers stale.
+	c.cache = cache.New(versions, "channels", store.VersionCatalog, ttl, staleTTL, maxEntries, log,
+		cache.WithClock(c.now))
 	return c
 }
 

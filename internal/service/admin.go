@@ -65,10 +65,14 @@ type AdminStore interface {
 // see invalidates the local read cache; the version counter in the database
 // takes care of the other instances.
 type Admin struct {
-	store    AdminStore
-	catalog  Invalidator
-	log      *slog.Logger
-	now      func() time.Time
+	store AdminStore
+	// invalidators are the read caches that configuration changes touch. The
+	// instance that performs a write clears them immediately; other instances
+	// converge when they next read the version counter.
+	invalidators []Invalidator
+	hasher       password.Hasher
+	log          *slog.Logger
+	now          func() time.Time
 }
 
 // Invalidator clears cached reads. Implemented by *Channels.
@@ -76,9 +80,19 @@ type Invalidator interface {
 	InvalidateAll()
 }
 
-// NewAdmin builds the admin service.
-func NewAdmin(st AdminStore, catalog Invalidator, log *slog.Logger) *Admin {
-	return &Admin{store: st, catalog: catalog, log: log, now: time.Now}
+// NewAdmin builds the admin service. The hasher decides the cost of every new
+// password; tests pass a cheap one. invalidators are the caches to clear after a
+// successful write — typically the read cache and the credential cache.
+func NewAdmin(st AdminStore, hasher password.Hasher, log *slog.Logger, invalidators ...Invalidator) *Admin {
+	return &Admin{store: st, hasher: hasher, log: log, now: time.Now, invalidators: invalidators}
+}
+
+func (a *Admin) invalidate() {
+	for _, inv := range a.invalidators {
+		if inv != nil {
+			inv.InvalidateAll()
+		}
+	}
 }
 
 // WithNow replaces the time source of the admin service, for tests.
@@ -101,7 +115,7 @@ func (a *Admin) CreateUser(ctx context.Context, in CreateUserInput) (store.User,
 	if err := password.Validate(in.Password); err != nil {
 		return store.User{}, InvalidArgument("invalid_password", err.Error())
 	}
-	hash, err := password.Hash(in.Password)
+	hash, err := a.hasher.Hash(in.Password)
 	if err != nil {
 		a.log.Error("could not hash password", "error", err)
 		return store.User{}, httpx.NewError(500, "internal_error", "the request could not be completed")
@@ -115,8 +129,8 @@ func (a *Admin) CreateUser(ctx context.Context, in CreateUserInput) (store.User,
 	if err != nil {
 		return store.User{}, mapStoreError(err)
 	}
-	// A new login changes nothing for existing users, so only the auth cache is
-	// affected; the version counter handles it. No catalog invalidation needed.
+	// A new login affects the credential cache, not what anybody may watch.
+	a.invalidate()
 	a.log.Info("admin: user created", "user_id", user.ID, "login", user.Login,
 		"is_admin", user.Admin, "is_active", user.Active)
 	return user, nil
@@ -150,7 +164,7 @@ func (a *Admin) UpdateUser(ctx context.Context, actorID, userID int64, in Update
 		if err := password.Validate(*in.Password); err != nil {
 			return store.User{}, InvalidArgument("invalid_password", err.Error())
 		}
-		hash, err := password.Hash(*in.Password)
+		hash, err := a.hasher.Hash(*in.Password)
 		if err != nil {
 			return store.User{}, httpx.NewError(500, "internal_error", "the request could not be completed")
 		}
@@ -163,6 +177,10 @@ func (a *Admin) UpdateUser(ctx context.Context, actorID, userID int64, in Update
 	if err != nil {
 		return store.User{}, mapStoreError(err)
 	}
+	// Disabling an account or changing a password must not wait for the cached
+	// credentials to expire: drop them here, and let the version counter do the
+	// same for the other instances.
+	a.invalidate()
 	a.log.Info("admin: user updated", "user_id", user.ID, "login", user.Login,
 		"is_active", user.Active, "is_admin", user.Admin,
 		"password_changed", patch.PasswordHash != nil)
@@ -205,7 +223,7 @@ func (a *Admin) CreateChannel(ctx context.Context, in CreateChannelInput) (store
 	if err != nil {
 		return store.Channel{}, mapStoreError(err)
 	}
-	a.catalog.InvalidateAll()
+	a.invalidate()
 	a.log.Info("admin: channel created", "channel_id", channel.ID, "number", channel.Number,
 		"is_active", channel.Active)
 	return channel, nil
@@ -248,7 +266,7 @@ func (a *Admin) UpdateChannel(ctx context.Context, id int64, in UpdateChannelInp
 	if err != nil {
 		return store.Channel{}, mapStoreError(err)
 	}
-	a.catalog.InvalidateAll()
+	a.invalidate()
 	a.log.Info("admin: channel updated", "channel_id", channel.ID, "number", channel.Number,
 		"is_active", channel.Active)
 	return channel, nil
@@ -272,7 +290,7 @@ func (a *Admin) Grant(ctx context.Context, userID, channelID int64, expiresAt *t
 	if err != nil {
 		return store.Subscription{}, mapStoreError(err)
 	}
-	a.catalog.InvalidateAll()
+	a.invalidate()
 	a.log.Info("admin: subscription granted", "user_id", userID, "channel_id", channelID,
 		"expires_at", formatOptional(expiresAt))
 	return sub, nil
@@ -285,7 +303,7 @@ func (a *Admin) Revoke(ctx context.Context, userID, channelID int64) (bool, erro
 		return false, mapStoreError(err)
 	}
 	if removed {
-		a.catalog.InvalidateAll()
+		a.invalidate()
 		a.log.Info("admin: subscription revoked", "user_id", userID, "channel_id", channelID)
 	}
 	return removed, nil

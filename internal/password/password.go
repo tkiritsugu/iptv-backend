@@ -1,16 +1,20 @@
 // Package password hashes and verifies user passwords.
 //
-// Only the derived key is stored, never the password itself. The encoded form
-// is self describing so that the work factor can be raised later without a
-// database migration:
+// Only the derived key is stored, never the password itself. The encoded form is
+// self describing, so the work factor can be raised later without a database
+// migration and old hashes keep working until their owner logs in once:
 //
 //	pbkdf2-sha256$<iterations>$<base64 salt>$<base64 derived key>
 //
 // PBKDF2-HMAC-SHA256 comes from the standard library (crypto/pbkdf2), which the
-// task requires us to prefer over third party code. A memory hard KDF such as
-// argon2id is the better choice for a real deployment; see README for the
-// trade-off and for how this package would be swapped (Verify and NeedsUpgrade
-// already keep the stored format versioned, so old hashes keep working).
+// task asks us to prefer over third party code. A memory hard KDF such as
+// argon2id is the better choice for a real deployment; README covers the
+// trade-off and the one-file swap this format allows.
+//
+// The work factor is a property of a Hasher rather than a constant baked into
+// every call, so it can be tuned per deployment (IPTV_PBKDF2_ITERATIONS) and set
+// low in tests. The iteration count travels with the hash, so mixing work
+// factors in one database is fine.
 package password
 
 import (
@@ -22,35 +26,40 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"hash"
 	"strconv"
 	"strings"
 )
 
+// algorithm names the KDF inside the stored string.
+const algorithm = "pbkdf2-sha256"
+
+// DefaultIterations is the work factor used when nothing is configured. On a
+// modest CPU this costs roughly 50 ms per verification, which is the intended
+// price for an offline guess — and the reason the HTTP layer caches successful
+// authentications for a few seconds instead of deriving a key per request.
+const DefaultIterations = 150_000
+
+// MinimumIterations is the lowest value the configuration accepts: below it the
+// setting looks like a tuning knob but is effectively "store the password in
+// plain PBKDF2".
+const MinimumIterations = 1_000
+
 const (
-	// algorithm names the KDF inside the stored string.
-	algorithm = "pbkdf2-sha256"
-
-	// Iterations is the work factor used for newly created hashes. Measured on
-	// a modest CPU this costs roughly 50 ms per verification, which is the
-	// intended price for an offline guess and the reason the HTTP layer caches
-	// successful authentications.
-	Iterations = 150_000
-
 	keyLength = 32 // 256 bit derived key
 	saltSize  = 16 // 128 bit random salt
 )
 
-// ErrInvalidHash reports a stored hash that this package cannot parse. It is an
-// internal data problem, never a user error, and must not leak to the client.
+// ErrInvalidHash reports a stored hash this package cannot parse. It is an
+// internal data problem, never a user error, and must not reach the client.
 var ErrInvalidHash = errors.New("password: stored hash is not readable")
 
 // MinimumLength is the shortest acceptable password.
 const MinimumLength = 8
 
-// Validate rejects passwords that are too short or too long to be sane. Long
-// passwords are hashed, not stored, so an upper bound only protects the request
-// body from being used as a CPU denial of service vector.
+// Validate rejects passwords too short to resist guessing and too long to be
+// anything but an attempt to spend CPU. Long passwords are hashed, not stored,
+// so the upper bound exists only to keep a request body from becoming a denial
+// of service vector.
 func Validate(pw string) error {
 	switch l := len([]rune(pw)); {
 	case l < MinimumLength:
@@ -62,19 +71,38 @@ func Validate(pw string) error {
 	}
 }
 
-// Hash derives a key from pw with a fresh random salt.
-func Hash(pw string) (string, error) {
-	return hashWith(pw, Iterations)
+// Hasher derives and checks keys at a given work factor.
+type Hasher struct {
+	Iterations int
 }
 
-// hashWith exists so that tests can afford to create many users quickly. The
-// iteration count travels with the hash, so mixed work factors in one database
-// are fine.
-func hashWith(pw string, iterations int) (string, error) {
+// Default is the Hasher a deployment gets when it does not configure anything.
+var Default = Hasher{}
+
+// New returns a Hasher, falling back to DefaultIterations for a non-positive
+// count so a missing setting can never silently produce a cheap hash.
+func New(iterations int) Hasher {
+	if iterations < 1 {
+		return Default
+	}
+	return Hasher{Iterations: iterations}
+}
+
+func (h Hasher) iterations() int {
+	if h.Iterations < 1 {
+		return DefaultIterations
+	}
+	return h.Iterations
+}
+
+// Hash derives a key from pw with a fresh random salt. Two calls with the same
+// password produce different strings, which is the point of the salt.
+func (h Hasher) Hash(pw string) (string, error) {
 	salt := make([]byte, saltSize)
 	if _, err := rand.Read(salt); err != nil {
 		return "", fmt.Errorf("password: generate salt: %w", err)
 	}
+	iterations := h.iterations()
 	dk, err := pbkdf2.Key(sha256.New, pw, salt, iterations, keyLength)
 	if err != nil {
 		return "", fmt.Errorf("password: derive key: %w", err)
@@ -87,9 +115,10 @@ func hashWith(pw string, iterations int) (string, error) {
 	}, "$"), nil
 }
 
-// Verify reports whether pw matches the stored hash. The comparison is
-// constant time with respect to the derived key.
-func Verify(stored, pw string) (bool, error) {
+// Verify reports whether pw matches a stored hash, using the work factor that
+// was recorded when the hash was created. The comparison is constant time with
+// respect to the derived key.
+func (h Hasher) Verify(stored, pw string) (bool, error) {
 	algorithmName, iterations, salt, want, err := parse(stored)
 	if err != nil {
 		return false, err
@@ -105,14 +134,23 @@ func Verify(stored, pw string) (bool, error) {
 }
 
 // NeedsUpgrade reports whether a stored hash was created with a weaker work
-// factor than the current one. The service re-hashes on successful login, so
-// work factors migrate without a batch job.
-func NeedsUpgrade(stored string) bool {
+// factor than the one in use. The service re-hashes on successful login — the
+// only moment the plaintext is available — which is how the work factor can be
+// raised without a batch migration.
+func (h Hasher) NeedsUpgrade(stored string) bool {
 	_, iterations, _, _, err := parse(stored)
 	if err != nil {
 		return false
 	}
-	return iterations < Iterations
+	return iterations < h.iterations()
+}
+
+// Burn spends one verification worth of CPU on a throwaway derivation. Callers
+// use it when the login does not exist, so that "no such user" cannot be told
+// apart from "wrong password" by measuring the response.
+func (h Hasher) Burn() {
+	// The salt is random and the result discarded; only the cost matters.
+	_, _ = h.Hash("timing equaliser - never a real password")
 }
 
 func parse(stored string) (alg string, iterations int, salt, key []byte, err error) {
@@ -133,32 +171,12 @@ func parse(stored string) (alg string, iterations int, salt, key []byte, err err
 	return parts[0], iterations, salt, key, nil
 }
 
-// burnHash is a hash of a password nobody can guess, used to spend the same
-// amount of CPU on an unknown login as on a known one. Without it a caller can
-// tell "no such user" from "wrong password" by timing the response.
-var burnHash = mustHash("iptv-timing-equaliser-not-a-real-password")
-
-func mustHash(s string) string {
-	h, err := hashWith(s, Iterations)
-	if err != nil {
-		panic("password: " + err.Error())
-	}
-	return h
-}
-
-// Burn spends one verification worth of CPU on a fixed dummy hash.
-func Burn() bool {
-	ok, err := Verify(burnHash, "wrong-on-purpose")
-	return err == nil && ok
-}
-
-// Fingerprint returns a keyed digest of a password for use as part of a cache
-// key. It keeps plaintext credentials out of process memory maps and logs while
-// still making two different passwords of the same login land on different
-// entries.
+// Fingerprint returns a keyed digest of a password for use inside a cache key.
+// It keeps plaintext credentials out of maps and logs while still making two
+// different passwords of the same login land on different entries. The key is
+// per process and never leaves it.
 func Fingerprint(key []byte, pw string) string {
-	m := hmac.New(sha256.New, key)
-	var h hash.Hash = m
-	h.Write([]byte(pw))
-	return base64.RawStdEncoding.EncodeToString(h.Sum(nil))[:22]
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(pw))
+	return base64.RawStdEncoding.EncodeToString(mac.Sum(nil))[:22]
 }

@@ -59,17 +59,18 @@ type Store interface {
 
 // Authenticator verifies credentials.
 type Authenticator struct {
-	store    Store
-	cache    *cache.Cache
-	limiter  *limit.Limiter
-	pwdKey   []byte
-	log      *slog.Logger
+	store   Store
+	cache   *cache.Cache
+	limiter *limit.Limiter
+	hasher  password.Hasher
+	pwdKey  []byte
+	log     *slog.Logger
 }
 
 // New builds an authenticator. The entries cache invalidates whenever the users
 // data version changes, so disabling an account takes effect on every instance
 // within the version poll interval.
-func New(st Store, versions *cache.Versions, ttl time.Duration, staleTTL time.Duration, maxEntries int, limiter *limit.Limiter, log *slog.Logger) (*Authenticator, error) {
+func New(st Store, versions *cache.Versions, hasher password.Hasher, ttl, staleTTL time.Duration, maxEntries int, limiter *limit.Limiter, log *slog.Logger) (*Authenticator, error) {
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
 		return nil, fmt.Errorf("auth: fingerprint key: %w", err)
@@ -78,6 +79,7 @@ func New(st Store, versions *cache.Versions, ttl time.Duration, staleTTL time.Du
 		store:   st,
 		cache:   cache.New(versions, "auth", store.VersionUsers, ttl, staleTTL, maxEntries, log),
 		limiter: limiter,
+		hasher:  hasher,
 		pwdKey:  key,
 		log:     log,
 	}, nil
@@ -85,6 +87,11 @@ func New(st Store, versions *cache.Versions, ttl time.Duration, staleTTL time.Du
 
 // CacheStats exposes cache counters for the admin API.
 func (a *Authenticator) CacheStats() cache.Stats { return a.cache.Stats() }
+
+// InvalidateAll drops every verified credential. An administrator who changes a
+// password or disables an account calls this through the admin service, so the
+// change bites on this instance right away instead of after the version poll.
+func (a *Authenticator) InvalidateAll() { a.cache.InvalidateAll() }
 
 // Verify checks a login/password pair and returns the principal.
 //
@@ -101,13 +108,13 @@ func (a *Authenticator) Verify(ctx context.Context, login, secret string) (*Prin
 		if errors.Is(err, store.ErrNotFound) {
 			// Spend the same CPU as for a real user, otherwise the response
 			// time tells an attacker which logins exist.
-			password.Burn()
+			a.hasher.Burn()
 			return nil, 0, cache.Permanent(ErrUnauthorized)
 		}
 		if err != nil {
 			return nil, 0, err
 		}
-		ok, err := password.Verify(user.PasswordHash, secret)
+		ok, err := a.hasher.Verify(user.PasswordHash, secret)
 		if err != nil {
 			// A corrupt hash is our problem, not a reason to tell the client
 			// anything specific.
@@ -140,10 +147,10 @@ func (a *Authenticator) Verify(ctx context.Context, login, secret string) (*Prin
 // factor. Doing it on a successful login — the only moment the plaintext is
 // available — is how a work factor stays raiseable without a batch migration.
 func (a *Authenticator) upgradeHash(ctx context.Context, user store.User, secret string) {
-	if !password.NeedsUpgrade(user.PasswordHash) {
+	if !a.hasher.NeedsUpgrade(user.PasswordHash) {
 		return
 	}
-	hash, err := password.Hash(secret)
+	hash, err := a.hasher.Hash(secret)
 	if err != nil {
 		a.log.Warn("could not upgrade password hash", "user_id", user.ID, "error", err)
 		return
